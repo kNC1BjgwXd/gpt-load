@@ -7,6 +7,12 @@ on:
   push:
     tags:
       - "v1.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号，例如 v1.4.13"
+        required: true
+        default: "v1.4.13"
 
 jobs:
   build:
@@ -17,45 +23,37 @@ jobs:
       matrix:
         goarch: [amd64, arm64]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20.x"
-          cache: "npm"
-          cache-dependency-path: "web/package-lock.json"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
-      - name: Build Frontend
-        run: npm ci && VITE_VERSION=${{ github.ref_name }} npm run build
+      - name: Build frontend
         working-directory: ./web
+        run: npm ci && VITE_VERSION=${{ inputs.version || github.ref_name }} npm run build
 
-      # 直接用最新版 Go（含 eMudhra CA 修复）
       - name: Setup Go (latest)
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@v5
         with:
           go-version: latest
           cache: true
           cache-dependency-path: go.sum
 
       - name: Build backend linux/${{ matrix.goarch }}
-        run: |
-          go mod download
-          go build \
-            -trimpath \
-            -ldflags "-s -w -X gpt-load/internal/version.Version=${{ github.ref_name }}" \
-            -o gpt-load-linux-${{ matrix.goarch }} \
-            .
         env:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
+        run: |
+          go mod download
+          go build -trimpath \
+            -ldflags "-s -w -X gpt-load/internal/version.Version=${{ inputs.version || github.ref_name }}" \
+            -o gpt-load-linux-${{ matrix.goarch }} .
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd1956f4f8a3808eb41 # v4
+      - uses: actions/upload-artifact@v4
         with:
           name: gpt-load-linux-${{ matrix.goarch }}
           path: |
@@ -64,23 +62,17 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Draft Release
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801b16 # v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v2
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          body: |
-            使用最新版 Go 自动编译（含 eMudhra CA 修复 / CVE-2026-111943）。
-            Built with latest Go (eMudhra CA fix / CVE-2026-111943).
+          tag_name: ${{ inputs.version || github.ref_name }}
           files: artifacts/**
           draft: true
           generate_release_notes: true
